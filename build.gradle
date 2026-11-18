@@ -1,0 +1,75 @@
+plugins {
+    id 'java'
+    id 'gg.essential.loom' version '0.10.0.5'
+    id 'dev.architectury.architectury-pack200' version '0.1.3'
+}
+
+version = '260729'
+group = 'myau'
+base {
+    archivesName = 'Myau'
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(8)
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+loom {
+    launchConfigs {
+        client {
+            arg("--tweakClass", "org.spongepowered.asm.launch.MixinTweaker")
+        }
+    }
+    forge {
+        pack200Provider.set(new dev.architectury.pack200.java.Pack200Adapter())
+        mixinConfig("mixins.myau.json")
+    }
+    mixin {
+        defaultRefmapName.set("mixins.myau.refmap.json")
+    }
+}
+
+configurations {
+    embed
+    implementation.extendsFrom(embed)
+}
+
+repositories {
+    mavenCentral()
+    maven { url = "https://repo.spongepowered.org/maven/" }
+    maven { url = "https://maven.minecraftforge.net/" }
+    maven { url = "https://repo.essential.gg/repository/maven-public/" }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:1.8.9"
+    mappings "de.oceanlabs.mcp:mcp_stable:22-1.8.9"
+    forge "net.minecraftforge:forge:1.8.9-11.15.1.2318-1.8.9"
+
+    embed("org.spongepowered:mixin:0.7.11-SNAPSHOT") {
+        transitive = false
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+processResources {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(configurations.embed.collect { it.isDirectory() ? it : zipTree(it) }) {
+        exclude 'LICENSE.txt', 'META-INF/MANIFSET.MF', 'META-INF/MANIFEST.MF', 'META-INF/*.RSA', 'META-INF/*.SF', 'META-INF/MUMFREY*'
+    }
+    manifest.attributes(
+            'MixinConfigs': 'mixins.myau.json',
+            'FMLCorePluginContainsFMLMod': true,
+            'TweakClass': 'org.spongepowered.asm.launch.MixinTweaker',
+            'ForceLoadAsMod': true
+    )
+}

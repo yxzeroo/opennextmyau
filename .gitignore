@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+build/
+
+# Minecraft run directory
+run/
+
+# IDEs & Editors
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local reference artifacts
+/Myau-260729.jar
+/TASK.md
