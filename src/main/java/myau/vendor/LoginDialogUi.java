@@ -1,14 +1,5 @@
 package myau.vendor;
 
-import java.awt.BorderLayout;
-import java.awt.CardLayout;
-import java.awt.Color;
-import java.awt.Dimension;
-import java.awt.FlowLayout;
-import java.awt.GridLayout;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
@@ -17,179 +8,245 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JTextField;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.GridLayout;
 
 /**
- * Restored Java representation of the native Dear ImGui authentication window ({@code 0x1805CEC90})
- * and toast notification overlay ({@code 0x1805ADF80}).
+ * Pure-Java Swing reconstruction of the native Dear ImGui {@code 1.88 WIP} +
+ * DirectX 11 login/registration window ({@code .rdata} {@code 0x1809E0D80..0x1809E0EE0})
+ * and toast notification overlay ({@code 0x1805ADF80}, {@code 0x1809E0258..0x1809E0288}).
+ *
+ * <p>Preserved strictly for structural reference; never instantiated by the client.
  */
-public class LoginDialogUi {
+public final class LoginDialogUi extends JDialog implements AuthWebSocketClient.StatusListener {
+    public static final int TOAST_NONE = 0;
+    public static final int TOAST_SUCCESS = 1;
+    public static final int TOAST_WARNING = 2;
+    public static final int TOAST_ERROR = 3;
+    public static final int TOAST_INFO = 4;
 
-    public enum ToastLevel {
-        NONE(""),
-        SUCCESS("Success"),
-        WARNING("Warning"),
-        ERROR("Error"),
-        INFO("Info");
+    private static final String CARD_LOGIN = "LOGIN";
+    private static final String CARD_REGISTER = "REGISTER";
 
-        public final String defaultTitle;
+    private final ClientIniStore iniStore = new ClientIniStore();
+    private final RegisterApiClient registerClient = new RegisterApiClient();
+    private final AuthWebSocketClient wsClient = new AuthWebSocketClient();
 
-        ToastLevel(String defaultTitle) {
-            this.defaultTitle = defaultTitle;
+    private final CardLayout cardLayout = new CardLayout();
+    private final JPanel cardContainer = new JPanel(cardLayout);
+    private final JLabel statusLabel = new JLabel(" ", SwingConstants.CENTER);
+
+    private final JTextField loginUsernameField = new JTextField();
+    private final JPasswordField loginPasswordField = new JPasswordField();
+    private final JCheckBox rememberCheckBox = new JCheckBox("Remember Me");
+    private final JButton signInButton = new JButton("Sign In");
+
+    private final JTextField regUsernameField = new JTextField();
+    private final JPasswordField regPasswordField = new JPasswordField();
+    private final JTextField regCdKeyField = new JTextField();
+    private final JButton registerButton = new JButton("Register");
+
+    public LoginDialogUi() {
+        setTitle(VendorConfig.CLIENT_NAME + " #" + VendorConfig.CLIENT_VERSION);
+        setModal(true);
+        setResizable(false);
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        wsClient.setStatusListener(this);
+
+        JPanel root = new JPanel(new BorderLayout(8, 8));
+        root.setBorder(BorderFactory.createEmptyBorder(14, 18, 14, 18));
+        root.setBackground(new Color(24, 24, 28));
+
+        JLabel header = new JLabel(VendorConfig.CLIENT_NAME + " #" + VendorConfig.CLIENT_VERSION, SwingConstants.CENTER);
+        header.setForeground(Color.WHITE);
+        header.setFont(header.getFont().deriveFont(Font.BOLD, 18f));
+        root.add(header, BorderLayout.NORTH);
+
+        cardContainer.setOpaque(false);
+        cardContainer.add(buildLoginPanel(), CARD_LOGIN);
+        cardContainer.add(buildRegisterPanel(), CARD_REGISTER);
+        root.add(cardContainer, BorderLayout.CENTER);
+
+        JPanel footerPanel = new JPanel(new GridLayout(2, 1, 2, 2));
+        footerPanel.setOpaque(false);
+        statusLabel.setForeground(new Color(200, 200, 210));
+        JLabel poweredBy = new JLabel("Powered by 苏辰", SwingConstants.CENTER);
+        poweredBy.setForeground(new Color(140, 140, 155));
+        footerPanel.add(statusLabel);
+        footerPanel.add(poweredBy);
+        root.add(footerPanel, BorderLayout.SOUTH);
+
+        setContentPane(root);
+        setPreferredSize(new Dimension(370, 320));
+        pack();
+        setLocationRelativeTo(null);
+
+        ClientIniStore.Credentials creds = iniStore.load();
+        rememberCheckBox.setSelected(creds.remember);
+        if (creds.remember) {
+            loginUsernameField.setText(creds.username);
+            loginPasswordField.setText(creds.password);
         }
     }
 
-    public static final class ToastNotification {
-        public final ToastLevel level;
-        public final String title;
-        public final String content;
-        public final long createdAtMs;
-        public final int durationMs;
+    private JPanel buildLoginPanel() {
+        JPanel panel = new JPanel(new GridLayout(0, 1, 4, 4));
+        panel.setOpaque(false);
 
-        public ToastNotification(ToastLevel level, int durationMs, String content) {
-            this(level, level.defaultTitle, content, System.currentTimeMillis(), durationMs);
-        }
+        panel.add(styledLabel("用户名 / Username"));
+        panel.add(loginUsernameField);
+        panel.add(styledLabel("密码 / Password"));
+        panel.add(loginPasswordField);
 
-        public ToastNotification(ToastLevel level, String title, String content, long createdAtMs, int durationMs) {
-            this.level = level;
-            this.title = (title == null || title.isEmpty()) ? level.defaultTitle : title;
-            this.content = content != null ? content : "";
-            this.createdAtMs = createdAtMs;
-            this.durationMs = durationMs;
-        }
+        rememberCheckBox.setOpaque(false);
+        rememberCheckBox.setForeground(Color.LIGHT_GRAY);
+        panel.add(rememberCheckBox);
 
-        public boolean isExpired(long nowMs) {
-            return (nowMs - this.createdAtMs) > (this.durationMs + 300L);
-        }
-    }
-
-    private final List<ToastNotification> toasts = new ArrayList<>();
-    private boolean registerMode = false;
-    private boolean loading = false;
-
-    public void pushToast(ToastLevel level, int durationMs, String message) {
-        synchronized (this.toasts) {
-            this.toasts.add(new ToastNotification(level, durationMs, message));
-        }
-    }
-
-    public List<ToastNotification> getActiveToasts() {
-        long now = System.currentTimeMillis();
-        synchronized (this.toasts) {
-            Iterator<ToastNotification> it = this.toasts.iterator();
-            while (it.hasNext()) {
-                if (it.next().isExpired(now)) {
-                    it.remove();
-                }
-            }
-            return new ArrayList<>(this.toasts);
-        }
-    }
-
-    public JDialog createDialog() {
-        ClientIniStore.SavedCredentials saved = ClientIniStore.load();
-
-        JDialog dialog = new JDialog((java.awt.Frame) null, VendorConfig.CLIENT_NAME, true);
-        dialog.setSize(new Dimension(380, 280));
-        dialog.setLocationRelativeTo(null);
-        dialog.setLayout(new BorderLayout(8, 8));
-
-        CardLayout cards = new CardLayout();
-        JPanel centerPanel = new JPanel(cards);
-        centerPanel.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
-
-        JTextField loginUser = new JTextField(saved.username, 20);
-        JPasswordField loginPass = new JPasswordField(saved.password, 20);
-        JCheckBox rememberBox = new JCheckBox("Remember Me", saved.remember);
-        JLabel statusLabel = new JLabel(VendorConfig.POWERED_BY);
-        statusLabel.setForeground(Color.GRAY);
-
-        JPanel loginCard = new JPanel(new GridLayout(0, 1, 4, 4));
-        loginCard.add(new JLabel("Username"));
-        loginCard.add(loginUser);
-        loginCard.add(new JLabel("Password"));
-        loginCard.add(loginPass);
-        loginCard.add(rememberBox);
-
-        JButton signInButton = new JButton("Sign In");
-        JButton toRegisterButton = new JButton("\u6ca1\u6709\u8d26\u53f7\uff1f\u70b9\u6211\u6ce8\u518c\u8d26\u53f7");
+        JButton switchRegisterButton = new JButton("没有账号？点我注册账号");
         JButton exitButton = new JButton("Exit");
 
-        JPanel loginActions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        loginActions.add(toRegisterButton);
-        loginActions.add(signInButton);
-        loginActions.add(exitButton);
-        loginCard.add(loginActions);
+        signInButton.addActionListener(e -> onSignInClicked());
+        switchRegisterButton.addActionListener(e -> cardLayout.show(cardContainer, CARD_REGISTER));
+        exitButton.addActionListener(e -> dispose());
 
-        JTextField regUser = new JTextField(20);
-        JPasswordField regPass = new JPasswordField(20);
-        JTextField regCdkey = new JTextField(20);
-        JButton registerButton = new JButton("Register");
-        JButton backLoginButton = new JButton("Back Login");
+        panel.add(signInButton);
+        panel.add(switchRegisterButton);
+        panel.add(exitButton);
+        return panel;
+    }
 
-        JPanel registerCard = new JPanel(new GridLayout(0, 1, 4, 4));
-        registerCard.add(new JLabel("Username"));
-        registerCard.add(regUser);
-        registerCard.add(new JLabel("Password"));
-        registerCard.add(regPass);
-        registerCard.add(new JLabel("CDKEY"));
-        registerCard.add(regCdkey);
+    private JPanel buildRegisterPanel() {
+        JPanel panel = new JPanel(new GridLayout(0, 1, 4, 4));
+        panel.setOpaque(false);
 
-        JPanel regActions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        regActions.add(backLoginButton);
-        regActions.add(registerButton);
-        registerCard.add(regActions);
+        panel.add(styledLabel("用户名 / Username"));
+        panel.add(regUsernameField);
+        panel.add(styledLabel("密码 / Password"));
+        panel.add(regPasswordField);
+        panel.add(styledLabel("注册码 / CDKEY"));
+        panel.add(regCdKeyField);
 
-        centerPanel.add(loginCard, "login");
-        centerPanel.add(registerCard, "register");
+        JButton backButton = new JButton("Back Login");
+        registerButton.addActionListener(e -> onRegisterClicked());
+        backButton.addActionListener(e -> cardLayout.show(cardContainer, CARD_LOGIN));
 
-        toRegisterButton.addActionListener(e -> {
-            this.registerMode = true;
-            cards.show(centerPanel, "register");
-        });
-        backLoginButton.addActionListener(e -> {
-            this.registerMode = false;
-            cards.show(centerPanel, "login");
-        });
-        exitButton.addActionListener(e -> dialog.dispose());
+        panel.add(registerButton);
+        panel.add(backButton);
+        return panel;
+    }
 
-        signInButton.addActionListener(e -> {
-            String u = loginUser.getText().trim();
-            String p = new String(loginPass.getPassword());
-            if (u.isEmpty() || p.isEmpty()) {
-                pushToast(ToastLevel.WARNING, 3000, "\u8bf7\u5148\u8f93\u5165\u8d26\u53f7\u5bc6\u7801");
-                statusLabel.setText("\u8bf7\u5148\u8f93\u5165\u8d26\u53f7\u5bc6\u7801");
-                return;
-            }
+    private void onSignInClicked() {
+        String user = loginUsernameField.getText().trim();
+        String pass = new String(loginPasswordField.getPassword());
+        if (user.isEmpty() || pass.isEmpty()) {
+            onNotify(TOAST_WARNING, 3000L, "请先输入账号密码");
+            return;
+        }
+
+        ClientIniStore.Credentials creds = new ClientIniStore.Credentials();
+        creds.remember = rememberCheckBox.isSelected();
+        creds.username = user;
+        creds.password = pass;
+        iniStore.save(creds);
+
+        signInButton.setEnabled(false);
+        statusLabel.setForeground(new Color(200, 200, 210));
+        statusLabel.setText("loading...");
+
+        Thread loginThread = new Thread(() -> {
             try {
-                ClientIniStore.save(rememberBox.isSelected(), u, p);
-            } catch (Exception ignored) {
+                wsClient.connectAndAuthenticate(user, pass);
+            } catch (Exception ex) {
+                onAuthFailed(ex.getMessage());
             }
-            this.loading = true;
-            statusLabel.setText("loading");
-        });
-
-        registerButton.addActionListener(e -> {
-            registerButton.setText("Registering");
-            RegisterApiClient.RegisterResult res = RegisterApiClient.registerAccount(
-                    regUser.getText().trim(),
-                    new String(regPass.getPassword()),
-                    regCdkey.getText().trim()
-            );
-            registerButton.setText("Register");
-            pushToast(res.success ? ToastLevel.SUCCESS : ToastLevel.ERROR, 3000, res.message);
-            statusLabel.setText(res.message);
-        });
-
-        dialog.add(centerPanel, BorderLayout.CENTER);
-        dialog.add(statusLabel, BorderLayout.SOUTH);
-        return dialog;
+        }, "Myau-Vendor-Login");
+        loginThread.setDaemon(true);
+        loginThread.start();
     }
 
-    public boolean isRegisterMode() {
-        return this.registerMode;
+    private void onRegisterClicked() {
+        String user = regUsernameField.getText().trim();
+        String pass = new String(regPasswordField.getPassword());
+        String cdKey = regCdKeyField.getText().trim();
+        if (user.isEmpty() || pass.isEmpty() || cdKey.isEmpty()) {
+            onNotify(TOAST_WARNING, 3000L, "请先输入账号密码");
+            return;
+        }
+
+        registerButton.setEnabled(false);
+        registerButton.setText("Registering");
+        Thread regThread = new Thread(() -> {
+            RegisterApiClient.RegisterResponse resp = registerClient.register(user, pass, cdKey);
+            SwingUtilities.invokeLater(() -> {
+                registerButton.setEnabled(true);
+                registerButton.setText("Register");
+                int level = resp.httpStatus == 200 && resp.code == 0 ? TOAST_SUCCESS : TOAST_ERROR;
+                onNotify(level, 4000L, resp.message);
+            });
+        }, "Myau-Vendor-Register");
+        regThread.setDaemon(true);
+        regThread.start();
     }
 
-    public boolean isLoading() {
-        return this.loading;
+    @Override
+    public void onNotify(int toastLevel, long durationMs, String message) {
+        SwingUtilities.invokeLater(() -> {
+            String prefix;
+            Color color;
+            switch (toastLevel) {
+                case TOAST_SUCCESS:
+                    prefix = "[Success] ";
+                    color = new Color(110, 220, 130);
+                    break;
+                case TOAST_WARNING:
+                    prefix = "[Warning] ";
+                    color = new Color(240, 200, 90);
+                    break;
+                case TOAST_ERROR:
+                    prefix = "[Error] ";
+                    color = new Color(240, 105, 105);
+                    break;
+                case TOAST_INFO:
+                    prefix = "[Info] ";
+                    color = new Color(130, 190, 245);
+                    break;
+                default:
+                    prefix = "";
+                    color = new Color(200, 200, 210);
+                    break;
+            }
+            statusLabel.setForeground(color);
+            statusLabel.setText(prefix + (message != null ? message : ""));
+        });
+    }
+
+    @Override
+    public void onAuthSucceeded() {
+        SwingUtilities.invokeLater(() -> {
+            signInButton.setEnabled(true);
+            dispose();
+        });
+    }
+
+    @Override
+    public void onAuthFailed(String reason) {
+        SwingUtilities.invokeLater(() -> {
+            signInButton.setEnabled(true);
+            if (reason != null && !reason.isEmpty()) {
+                onNotify(TOAST_ERROR, 4000L, reason);
+            }
+        });
+    }
+
+    private static JLabel styledLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setForeground(new Color(220, 220, 230));
+        return label;
     }
 }

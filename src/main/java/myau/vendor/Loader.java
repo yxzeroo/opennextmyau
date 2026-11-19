@@ -7,12 +7,20 @@ import java.io.InputStream;
 
 /**
  * Restored from {@code antiLeak-1a2786b1-7d43-4a96-b4bc-752eb89b1600/Loader.class}.
- * Extracts the bundled platform native library into {@code native/<random6>.lib} and loads it.
- * Restored for inspection only; never invoked by the mod.
+ *
+ * <p>In the original JAR, {@code Loader}'s static initializer ({@code <clinit>})
+ * derived the resource prefix from {@code Loader.class.getName().split("\\.")[0]},
+ * extracted {@code /antiLeak-1a2786b1-7d43-4a96-b4bc-752eb89b1600/x64-windows.dll}
+ * into {@code native/<random6>.lib}, and called {@link System#load(String)}.
+ * The 32 native-obfuscated client classes then called
+ * {@link #registerNativesForClass(int, Class)} from their {@code <clinit>} blocks.
+ *
+ * <p>Moved into {@code myau.vendor} and extracted out of {@code static {}} so it
+ * remains inert and never executes during normal mod startup.
  */
 public class Loader {
     public static String By_SuChen = "<3 qwq";
-    private static final String RESOURCE_NAMESPACE = "antiLeak-1a2786b1-7d43-4a96-b4bc-752eb89b1600";
+    private static final String RESOURCE_NAMESPACE = VendorConfig.LOADER_RESOURCE_NAMESPACE;
 
     public static native void registerNativesForClass(int classId, Class<?> targetClass);
 
